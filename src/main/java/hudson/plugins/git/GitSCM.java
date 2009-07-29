@@ -1,5 +1,6 @@
 package hudson.plugins.git;
 
+import hudson.EnvVars;
 import hudson.FilePath;
 import hudson.Launcher;
 import hudson.Proc;
@@ -8,6 +9,7 @@ import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
 import hudson.model.BuildListener;
+import hudson.model.Computer;
 import hudson.model.Hudson;
 import hudson.model.Result;
 import hudson.model.TaskListener;
@@ -181,7 +183,13 @@ public class GitSCM extends SCM implements Serializable {
 			public Boolean invoke(File localWorkspace, VirtualChannel channel)
 					throws IOException {
 
-				IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener);
+				EnvVars environment = new EnvVars();
+                try {
+                    environment = Computer.currentComputer().getEnvironment();
+                } catch (InterruptedException e) {
+                    listener.error("Interrupted exception getting environment .. trying empty environment");
+                }
+                IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);
 				
 				
 				IBuildChooser buildChooser = new BuildChooser(GitSCM.this,git,new GitUtils(listener,git), buildData );
@@ -239,7 +247,7 @@ public class GitSCM extends SCM implements Serializable {
 
 					File subdir = new File(workspace, submodule.getFile());
 					IGitAPI subGit = new GitAPI(git.getGitExe(), new FilePath(subdir),
-							listener);
+							listener, git.getEnvironment());
 
 					subGit.fetch(submoduleRemoteRepository);
 				} catch (Exception ex) {
@@ -361,7 +369,13 @@ public class GitSCM extends SCM implements Serializable {
 			    FilePath ws = new FilePath(localWorkspace);
 			    listener.getLogger().println("Checkout:" + ws.getName() + " / " + ws.getRemote() + " - " + ws.getChannel());
 			    
-				IGitAPI git = new GitAPI(gitExe, ws, listener);
+				EnvVars environment = new EnvVars();
+                try {
+                    environment = build.getEnvironment(listener);
+                } catch (InterruptedException e) {
+                    listener.error("Interrupted exception getting environment .. using empty environment");
+                }
+                IGitAPI git = new GitAPI(gitExe, ws, listener, environment);
 
 				if (git.hasGitRepo()) {
 					// It's an update
@@ -437,7 +451,14 @@ public class GitSCM extends SCM implements Serializable {
 				returnData = workspace.act(new FileCallable<Object[]>() {
 					public Object[] invoke(File localWorkspace, VirtualChannel channel)
 							throws IOException {
-						IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener);
+						EnvVars environment;
+						try {
+						    environment = build.getEnvironment(listener);
+						} catch (Exception e) {
+						    listener.error("Exception reading environment - using empty environment");
+						    environment = new EnvVars();
+						}
+                        IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);
                
                         IBuildChooser buildChooser = new BuildChooser(GitSCM.this,git,new GitUtils(listener,git), buildData );
                         
@@ -521,7 +542,13 @@ public class GitSCM extends SCM implements Serializable {
 		returnData = workspace.act(new FileCallable<Object[]>() {
 			public Object[] invoke(File localWorkspace, VirtualChannel channel)
 					throws IOException {
-				IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener);                            
+				EnvVars environment = new EnvVars();
+                try {
+                    environment = build.getEnvironment(listener);
+                } catch (InterruptedException e) {
+                    listener.error("Interrupted exception getting environment .. trying empty environment");
+                }
+                IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);                            
                 IBuildChooser buildChooser = new BuildChooser(GitSCM.this,git,new GitUtils(listener,git), buildData );
                 
 				// Straight compile-the-branch
