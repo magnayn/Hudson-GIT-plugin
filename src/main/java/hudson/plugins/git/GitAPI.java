@@ -163,6 +163,12 @@ public class GitAPI implements IGitAPI {
 			throw new GitException("Could not clone " + source, e);
 		}
 	}
+	
+	public void clean() throws GitException {
+		ArgumentListBuilder args = new ArgumentListBuilder();
+		args.add(getGitExe(), "clean", "-fdx");
+		launchCommand(args.toCommandArray());
+	}
 
 	public ObjectId revParse(String revName) throws GitException {
 		ArgumentListBuilder args = new ArgumentListBuilder();
@@ -223,7 +229,7 @@ public class GitAPI implements IGitAPI {
 	public void changelog(String revFrom, String revTo, OutputStream fos)
 			throws GitException {
 		// git log --numstat -M --summary --pretty=raw HEAD..origin
-		log(revFrom, revTo, fos, "--numstat", "-M", "--summary", "--pretty=raw");
+		log(revFrom, revTo, fos, "--name-status", "-M", "--summary", "--pretty=raw");
 	}
 
 	/**

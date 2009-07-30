@@ -12,6 +12,7 @@ import hudson.model.BuildListener;
 import hudson.model.Computer;
 import hudson.model.Hudson;
 import hudson.model.Result;
+import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.plugins.git.browser.GitWeb;
 import hudson.plugins.git.opt.PreBuildMergeOptions;
@@ -22,7 +23,6 @@ import hudson.plugins.git.util.GitUtils;
 import hudson.plugins.git.util.IBuildChooser;
 import hudson.remoting.VirtualChannel;
 import hudson.scm.ChangeLogParser;
-import hudson.scm.RepositoryBrowsers;
 import hudson.scm.SCM;
 import hudson.scm.SCMDescriptor;
 import hudson.util.FormFieldValidator;
@@ -32,16 +32,14 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.Serializable;
+import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 import javax.servlet.ServletException;
 
-import org.apache.commons.logging.Log;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -80,6 +78,8 @@ public class GitSCM extends SCM implements Serializable {
 
     private boolean doGenerateSubmoduleConfigurations;
 
+	private boolean clean;
+
 	private GitWeb browser;
 
 	private Collection<SubmoduleConfig> submoduleCfg;
@@ -98,7 +98,9 @@ public class GitSCM extends SCM implements Serializable {
 	        List<BranchSpec> branches,
 	        PreBuildMergeOptions mergeOptions,
 	        boolean doGenerateSubmoduleConfigurations, 
-			Collection<SubmoduleConfig> submoduleCfg, GitWeb browser) {
+	        Collection<SubmoduleConfig> submoduleCfg,
+	        boolean clean,
+	        GitWeb browser) {
 		
 		// normalization
 	    this.branches = branches;
@@ -111,6 +113,7 @@ public class GitSCM extends SCM implements Serializable {
 		this.doGenerateSubmoduleConfigurations = doGenerateSubmoduleConfigurations;
 		this.submoduleCfg = submoduleCfg;
 
+		this.clean = clean;
 	}
 	
    public Object readResolve()  {
@@ -132,7 +135,7 @@ public class GitSCM extends SCM implements Serializable {
 			
 		   if( branch != null )
 	       {
-	    	   branches.add(GitUtils.makeSensibleBranchSpec(branch));
+	    	   branches.add(new BranchSpec(branch));
 	       }
 	       else
 	       {
@@ -147,6 +150,10 @@ public class GitSCM extends SCM implements Serializable {
 	@Override
 	public GitWeb getBrowser() {
 		return browser;
+	}
+
+	public boolean getClean() {
+		return this.clean;
 	}
 
 	public List<RemoteConfig> getRepositories() {
@@ -172,7 +179,7 @@ public class GitSCM extends SCM implements Serializable {
             listener.getLogger().println("[poll] Last Build : #" + lastBuild.getNumber() );        
         }
         
-        final BuildData buildData = lastBuild!=null?lastBuild.getAction(BuildData.class):null;
+        final BuildData buildData = getBuildData(lastBuild, false);
         
         if( buildData != null && buildData.lastBuild != null)
         {
@@ -205,7 +212,7 @@ public class GitSCM extends SCM implements Serializable {
 
 					listener.getLogger().println("Polling for changes in");
 					
-					Collection<Revision> candidates = buildChooser.getCandidateRevisions(); 
+					Collection<Revision> candidates = buildChooser.getCandidateRevisions(null); 
 					
 					return (candidates.size() > 0);
 				} else {
@@ -348,15 +355,7 @@ public class GitSCM extends SCM implements Serializable {
 		
 		final String buildnumber = "hudson-" + projectName + "-" + buildNumber;
 		
-		AbstractBuild lastBuild = (AbstractBuild)build.getPreviousBuild();
-		
-		if( lastBuild != null )
-		{
-		    listener.getLogger().println("Last Build : #" + lastBuild.getNumber() );
-	            
-		}
-		
-		final BuildData buildData = lastBuild!=null?lastBuild.getAction(BuildData.class):null;
+		final BuildData buildData = getBuildData(build.getPreviousBuild(), true);
 		
 		if( buildData != null && buildData.lastBuild != null)
 		{
@@ -428,9 +427,9 @@ public class GitSCM extends SCM implements Serializable {
 				              
                 IBuildChooser buildChooser = new BuildChooser(GitSCM.this,git,new GitUtils(listener,git), buildData );
 				
-                Collection<Revision> candidates = buildChooser.getCandidateRevisions();
+                Collection<Revision> candidates = buildChooser.getCandidateRevisions(build);
 				if( candidates.size() == 0 )
-					return buildData == null?null:buildData.getLastBuiltRevision();
+					return null;
 				return candidates.iterator().next();
 			}
 		});
@@ -609,6 +608,11 @@ public class GitSCM extends SCM implements Serializable {
                 
                 
                 buildChooser.revisionBuilt(revToBuild, buildNumber, null);
+
+                if (getClean()) {
+    				listener.getLogger().println("Cleaning workspace");
+                    git.clean();
+                }
                 
                 // Fetch the diffs into the changelog file
                 return new Object[]{changeLog.toString(), buildChooser.getData()};
@@ -616,6 +620,7 @@ public class GitSCM extends SCM implements Serializable {
 			}
 		});
 		build.addAction((Action) returnData[1]);
+
         return changeLogResult((String) returnData[0], changelogFile);
 
 	}
@@ -722,12 +727,7 @@ public class GitSCM extends SCM implements Serializable {
             String[] branchData = req.getParameterValues("git.branch");
             for( int i=0; i<branchData.length;i++ )
             {
-            	// People will often blindly specify *local* branches like 'master' when
-            	// We want all branches to be relative to a remote (origin/master, */master).
-            	
-            	BranchSpec bs = GitUtils.makeSensibleBranchSpec(branchData[i]);
-
-                branches.add(bs);
+                branches.add(new BranchSpec(branchData[i]));
             }
             
             if( branches.size() == 0 )
@@ -743,14 +743,28 @@ public class GitSCM extends SCM implements Serializable {
 
 			Collection<SubmoduleConfig> submoduleCfg = new ArrayList<SubmoduleConfig>();
 			
+			GitWeb gitWeb = null;
+			String gitWebUrl = req.getParameter("gitweb.url");
+			if (gitWebUrl != null && gitWebUrl.length() > 0)
+			{
+				try
+				{
+					gitWeb = new GitWeb(gitWebUrl);
+				}
+				catch (MalformedURLException e)
+				{
+					throw new GitException("Error creating GitWeb", e);
+				}
+			}
+
 			return new GitSCM(
 					remoteRepositories,
 					branches,
 					mergeOptions,
 				    req.getParameter("git.generate") != null, 
-					submoduleCfg, RepositoryBrowsers
-							.createInstance(GitWeb.class, req, "git.browser")
-				);
+					submoduleCfg,
+					req.getParameter("git.clean") != null,
+					gitWeb);
 		}
 
 		
@@ -807,6 +821,30 @@ public class GitSCM extends SCM implements Serializable {
         return mergeOptions;
     }
     
-    
-
+    /**
+     * Look back as far as needed to find a valid BuildData.  BuildData
+     * may not be recorded if an exception occurs in the plugin logic.
+     * @param build 
+     * @param clone
+     * @return the last recorded build data
+     */
+    public BuildData getBuildData(Run build, boolean clone)
+    {
+		BuildData buildData = null;
+		while (build != null)
+		{
+			buildData = build.getAction(BuildData.class);
+			if (buildData != null)
+				break;
+			build = build.getPreviousBuild();
+		}
+		
+		if (buildData == null)
+			return null;
+		
+		if (clone)
+			return buildData.clone();
+		else
+			return buildData;
+    }
 }
