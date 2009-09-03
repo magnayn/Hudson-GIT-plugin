@@ -16,6 +16,8 @@ import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.plugins.git.browser.GitWeb;
 import hudson.plugins.git.opt.PreBuildMergeOptions;
+import hudson.plugins.git.submodule.SubmoduleCombinator;
+import hudson.plugins.git.submodule.SubmoduleConfig;
 import hudson.plugins.git.util.Build;
 import hudson.plugins.git.util.BuildChooser;
 import hudson.plugins.git.util.BuildData;
@@ -584,7 +586,7 @@ public class GitSCM extends SCM implements Serializable {
 				if (doGenerateSubmoduleConfigurations) {
 					SubmoduleCombinator combinator = new SubmoduleCombinator(
 							git, listener, localWorkspace, submoduleCfg);
-					combinator.createSubmoduleCombinations();
+					combinator.createSubmoduleCombinations("HEAD");
 				}
 
 				if (git.hasGitModules()) {

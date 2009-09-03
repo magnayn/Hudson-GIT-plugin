@@ -1,4 +1,7 @@
-package hudson.plugins.git;
+package hudson.plugins.git.submodule;
+
+import hudson.plugins.git.Branch;
+import hudson.plugins.git.Revision;
 
 import java.util.regex.Pattern;
 
