@@ -62,13 +62,13 @@ public class GitSCM extends SCM implements Serializable {
    // when writing back
 	@Deprecated transient String source;
 	@Deprecated transient String branch;
-	
+
 	/**
 	 * Store a config version so we're able to migrate config on various
 	 * functionality upgrades.
 	 */
 	private Long configVersion;
-	
+
     /**
      * All the remote repositories that we know about.
      */
@@ -122,18 +122,18 @@ public class GitSCM extends SCM implements Serializable {
 		this.submoduleCfg = submoduleCfg;
 
 		this.clean = clean;
-		
+
 		this.configVersion = 1L;
 	}
 
    public Object readResolve()  {
 	    // Migrate data
-	   
+
       // Default unspecified to v0
       if( configVersion == null )
          configVersion = 0L;
-      
-      
+
+
        if(source!=null)
        {
     	   remoteRepositories = new ArrayList<RemoteConfig>();
@@ -158,11 +158,11 @@ public class GitSCM extends SCM implements Serializable {
 	       }
 
        }
-       
-       
+
+
        if( configVersion < 1 && branches != null )
        {
-          // Migrate the branch specs from 
+          // Migrate the branch specs from
           // single * wildcard, to ** wildcard.
           for( BranchSpec branchSpec : branches )
           {
@@ -171,7 +171,7 @@ public class GitSCM extends SCM implements Serializable {
              branchSpec.setName(name);
           }
        }
-       
+
        return this;
    }
 
@@ -241,18 +241,19 @@ public class GitSCM extends SCM implements Serializable {
 
         final String singleBranch = getSingleBranch(lastBuild);
 
+		EnvVars tmp = new EnvVars();
+        try {
+            tmp = Computer.currentComputer().getEnvironment();
+        } catch (InterruptedException e) {
+            listener.error("Interrupted exception getting environment .. trying empty environment");
+        }
+        final EnvVars environment = tmp;
+
 		boolean pollChangesResult = workspace.act(new FileCallable<Boolean>() {
 			private static final long serialVersionUID = 1L;
 
 			public Boolean invoke(File localWorkspace, VirtualChannel channel)
 					throws IOException {
-
-				EnvVars environment = new EnvVars();
-                try {
-                    environment = Computer.currentComputer().getEnvironment();
-                } catch (InterruptedException e) {
-                    listener.error("Interrupted exception getting environment .. trying empty environment");
-                }
                 IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);
 
 
@@ -277,16 +278,10 @@ public class GitSCM extends SCM implements Serializable {
 					return true;
 				}
 			}
-
-
 		});
 
 		return pollChangesResult;
 	}
-
-
-
-
 
 	/**
 	 * Fetch information from a particular remote repository. Attempt to fetch
@@ -568,20 +563,21 @@ public class GitSCM extends SCM implements Serializable {
 						// Tag the successful merge
 						git.tag(buildnumber, "Hudson Build #" + buildNumber);
 
-						String changeLog = "";
+						StringBuilder changeLog = new StringBuilder();
 
 						if( revToBuild.getBranches().size() > 0 )
 								listener.getLogger().println("Warning : There are multiple branch changesets here");
 
-						for( Branch b : revToBuild.getBranches() )
-						{
-						    Build lastRevWas = buildData==null?null:buildData.getLastBuildOfBranch(b.getName());
-
-						    if( lastRevWas != null )
-						    {
-						    	// TODO: Inefficent string concat
-						        changeLog += putChangelogDiffsIntoFile(git,  b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name());
-						    }
+						try {
+							for( Branch b : revToBuild.getBranches() )
+							{
+							    Build lastRevWas = buildData==null?null:buildData.getLastBuildOfBranch(b.getName());
+							    if( lastRevWas != null ) {
+							        changeLog.append(putChangelogDiffsIntoFile(git,  b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name()));
+							    }
+							}
+						} catch (GitException ge) {
+							changeLog.append("Unable to retrieve changeset");
 						}
 
 						Build buildData = buildChooser.revisionBuilt(revToBuild, buildNumber, null);
@@ -590,7 +586,6 @@ public class GitSCM extends SCM implements Serializable {
 
 						// Fetch the diffs into the changelog file
 						return new Object[]{changeLog, buildChooser.getData()};
-
 					}
 				});
 				BuildData returningBuildData = (BuildData)returnData[1];
@@ -643,22 +638,26 @@ public class GitSCM extends SCM implements Serializable {
 				// Tag the successful merge
                 git.tag(buildnumber, "Hudson Build #" + buildNumber);
 
-                StringBuffer changeLog = new StringBuffer();
+                StringBuilder changeLog = new StringBuilder();
 
                 int histories = 0;
 
-                for( Branch b : revToBuild.getBranches() )
-                {
-                    Build lastRevWas = buildData==null?null:buildData.getLastBuildOfBranch(b.getName());
+                try {
+	                for( Branch b : revToBuild.getBranches() )
+	                {
+	                    Build lastRevWas = buildData==null?null:buildData.getLastBuildOfBranch(b.getName());
 
-                    if( lastRevWas != null )
-                    {
-                        listener.getLogger().println("Recording changes in branch " + b.getName());
-                        changeLog.append(putChangelogDiffsIntoFile(git, b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name()));
-                        histories++;
-                    } else {
-                        listener.getLogger().println("No change to record in branch " + b.getName());
-                    }
+	                    if( lastRevWas != null )
+	                    {
+	                        listener.getLogger().println("Recording changes in branch " + b.getName());
+	                        changeLog.append(putChangelogDiffsIntoFile(git, b.name, lastRevWas.getSHA1().name(), revToBuild.getSha1().name()));
+	                        histories++;
+	                    } else {
+	                        listener.getLogger().println("No change to record in branch " + b.getName());
+	                    }
+	                }
+                } catch (GitException ge) {
+					changeLog.append("Unable to retrieve changeset");
                 }
 
                 if( histories > 1 )
