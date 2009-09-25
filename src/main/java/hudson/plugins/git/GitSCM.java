@@ -4,7 +4,6 @@ import hudson.EnvVars;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
-import hudson.Proc;
 import hudson.FilePath.FileCallable;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
@@ -27,7 +26,7 @@ import hudson.remoting.VirtualChannel;
 import hudson.scm.ChangeLogParser;
 import hudson.scm.SCM;
 import hudson.scm.SCMDescriptor;
-import hudson.util.FormFieldValidator;
+import hudson.util.FormValidation;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -42,9 +41,10 @@ import java.util.List;
 
 import javax.servlet.ServletException;
 
+import net.sf.json.JSONObject;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
-import org.kohsuke.stapler.StaplerResponse;
 import org.spearce.jgit.lib.ObjectId;
 import org.spearce.jgit.lib.RepositoryConfig;
 import org.spearce.jgit.transport.RefSpec;
@@ -728,7 +728,8 @@ public class GitSCM extends SCM implements Serializable {
 			return gitExe;
 		}
 
-		public SCM newInstance(StaplerRequest req) throws FormException {
+		@Override
+		public SCM newInstance(StaplerRequest req, JSONObject formData) throws FormException {
 			List<RemoteConfig> remoteRepositories;
 			File temp;
 
@@ -832,31 +833,26 @@ public class GitSCM extends SCM implements Serializable {
 			return true;
 		}
 
-		public void doGitExeCheck(StaplerRequest req, StaplerResponse rsp)
+		public FormValidation doGitExeCheck(@QueryParameter final String value)
 				throws IOException, ServletException {
-			new FormFieldValidator.Executable(req, rsp) {
-				protected void checkExecutable(File exe) throws IOException,
-						ServletException {
+			return FormValidation.validateExecutable(value, new FormValidation.FileValidator() {
+				@Override public FormValidation validate(File exe) {
 					ByteArrayOutputStream baos = new ByteArrayOutputStream();
 					try {
-						Proc proc = Hudson.getInstance().createLauncher(
-								TaskListener.NULL).launch(
-								new String[] { getGitExe(), "--version" },
-								new String[0], baos, null);
-						proc.join();
+						int r = Hudson.getInstance().createLauncher(
+								TaskListener.NULL).launch()
+								.cmds(exe.getPath(), "--version")
+								.stdout(baos).join();
 
 						// String result = baos.toString();
 
-						ok();
+						return FormValidation.ok();
 
-					} catch (InterruptedException e) {
-						error("Unable to check git version");
-					} catch (RuntimeException e) {
-						error("Unable to check git version");
+					} catch (Exception e) {
+						return FormValidation.error("Unable to check git version");
 					}
-
 				}
-			}.process();
+			});
 		}
 	}
 

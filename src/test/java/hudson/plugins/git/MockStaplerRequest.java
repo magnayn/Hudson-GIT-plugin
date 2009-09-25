@@ -178,6 +178,10 @@ public class MockStaplerRequest implements StaplerRequest {
         throw new UnsupportedOperationException();
     }
 
+    public String getOriginalRestOfPath() {
+        throw new UnsupportedOperationException();
+    }
+
     public String getReferer() {
         throw new UnsupportedOperationException();
     }
