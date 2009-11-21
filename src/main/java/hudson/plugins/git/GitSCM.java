@@ -4,6 +4,7 @@ import hudson.EnvVars;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
+import hudson.Proc;
 import hudson.FilePath.FileCallable;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
@@ -26,7 +27,7 @@ import hudson.remoting.VirtualChannel;
 import hudson.scm.ChangeLogParser;
 import hudson.scm.SCM;
 import hudson.scm.SCMDescriptor;
-import hudson.util.FormValidation;
+import hudson.util.FormFieldValidator;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -41,10 +42,9 @@ import java.util.List;
 
 import javax.servlet.ServletException;
 
-import net.sf.json.JSONObject;
 import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerResponse;
 import org.spearce.jgit.lib.ObjectId;
 import org.spearce.jgit.lib.RepositoryConfig;
 import org.spearce.jgit.transport.RefSpec;
@@ -458,10 +458,14 @@ public class GitSCM extends SCM implements Serializable {
 					        break;
 					    }
 					    catch(GitException ex)
-					    {
-					        // Failed. Try the next one
-					        listener.getLogger().println("Trying next repository");
-					    }
+                        {
+                            listener.error("Error cloning remote repo '%s' : %s", rc.getName(), ex.getMessage());
+                            if(ex.getCause() != null) {
+                                listener.error("Cause: %s", ex.getCause().getMessage());
+                            }
+                            // Failed. Try the next one
+                            listener.getLogger().println("Trying next repository");
+                        }
 					}
 
 					if( !successfullyCloned )
@@ -585,7 +589,7 @@ public class GitSCM extends SCM implements Serializable {
 						buildData.mergeRevision = gu.getRevisionForSHA1(target);
 
 						// Fetch the diffs into the changelog file
-						return new Object[]{changeLog, buildChooser.getData()};
+						return new Object[]{changeLog.toString(), buildChooser.getData()};
 					}
 				});
 				BuildData returningBuildData = (BuildData)returnData[1];
@@ -728,8 +732,7 @@ public class GitSCM extends SCM implements Serializable {
 			return gitExe;
 		}
 
-		@Override
-		public SCM newInstance(StaplerRequest req, JSONObject formData) throws FormException {
+		public SCM newInstance(StaplerRequest req) throws FormException {
 			List<RemoteConfig> remoteRepositories;
 			File temp;
 
@@ -833,26 +836,31 @@ public class GitSCM extends SCM implements Serializable {
 			return true;
 		}
 
-		public FormValidation doGitExeCheck(@QueryParameter final String value)
+		public void doGitExeCheck(StaplerRequest req, StaplerResponse rsp)
 				throws IOException, ServletException {
-			return FormValidation.validateExecutable(value, new FormValidation.FileValidator() {
-				@Override public FormValidation validate(File exe) {
+			new FormFieldValidator.Executable(req, rsp) {
+				protected void checkExecutable(File exe) throws IOException,
+						ServletException {
 					ByteArrayOutputStream baos = new ByteArrayOutputStream();
 					try {
-						int r = Hudson.getInstance().createLauncher(
-								TaskListener.NULL).launch()
-								.cmds(exe.getPath(), "--version")
-								.stdout(baos).join();
+						Proc proc = Hudson.getInstance().createLauncher(
+								TaskListener.NULL).launch(
+								new String[] { getGitExe(), "--version" },
+								new String[0], baos, null);
+						proc.join();
 
 						// String result = baos.toString();
 
-						return FormValidation.ok();
+						ok();
 
-					} catch (Exception e) {
-						return FormValidation.error("Unable to check git version");
+					} catch (InterruptedException e) {
+						error("Unable to check git version");
+					} catch (RuntimeException e) {
+						error("Unable to check git version");
 					}
+
 				}
-			});
+			}.process();
 		}
 	}
 
