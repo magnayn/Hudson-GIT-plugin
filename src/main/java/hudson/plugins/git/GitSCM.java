@@ -6,6 +6,8 @@ import hudson.FilePath;
 import hudson.Launcher;
 import hudson.Proc;
 import hudson.FilePath.FileCallable;
+import hudson.matrix.MatrixBuild;
+import hudson.matrix.MatrixRun;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
 import hudson.model.Action;
@@ -28,6 +30,7 @@ import hudson.scm.ChangeLogParser;
 import hudson.scm.SCM;
 import hudson.scm.SCMDescriptor;
 import hudson.util.FormFieldValidator;
+import hudson.util.FormValidation;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -170,6 +173,11 @@ public class GitSCM extends SCM implements Serializable {
              name = name.replace("*", "**");
              branchSpec.setName(name);
           }
+       }
+
+       if( mergeOptions.doMerge() && mergeOptions.getMergeRemote() == null )
+       {
+           mergeOptions.setMergeRemote(remoteRepositories.get(0));
        }
 
        return this;
@@ -424,6 +432,20 @@ public class GitSCM extends SCM implements Serializable {
 
         final String singleBranch = getSingleBranch(build);
 
+        Revision tempParentLastBuiltRev = null;
+
+        if (build instanceof MatrixRun) {
+            MatrixBuild parentBuild = ((MatrixRun)build).getParentBuild();
+            if (parentBuild != null) {
+                BuildData parentBuildData = parentBuild.getAction(BuildData.class);
+                if (parentBuildData != null) {
+                    tempParentLastBuiltRev = parentBuildData.getLastBuiltRevision();
+                }
+            }
+        }
+
+        final Revision parentLastBuiltRev = tempParentLastBuiltRev;
+
 		final Revision revToBuild = workspace.act(new FileCallable<Revision>() {
 			private static final long serialVersionUID = 1L;
 			public Revision invoke(File localWorkspace, VirtualChannel channel)
@@ -486,6 +508,9 @@ public class GitSCM extends SCM implements Serializable {
 					}
 				}
 
+                if (parentLastBuiltRev != null)
+                    return parentLastBuiltRev;
+
                 IBuildChooser buildChooser = new BuildChooser(GitSCM.this,git,new GitUtils(listener,git), buildData );
 
                 Collection<Revision> candidates = buildChooser.getCandidateRevisions(false, singleBranch);
@@ -507,18 +532,11 @@ public class GitSCM extends SCM implements Serializable {
 
 
 		if (mergeOptions.doMerge()) {
-			if (!revToBuild.containsBranchName(mergeOptions.getMergeTarget())) {
+			if (!revToBuild.containsBranchName(mergeOptions.getRemoteBranchName())) {
 				returnData = workspace.act(new FileCallable<Object[]>() {
 					private static final long serialVersionUID = 1L;
 					public Object[] invoke(File localWorkspace, VirtualChannel channel)
 							throws IOException {
-						EnvVars environment;
-						try {
-						    environment = build.getEnvironment(listener);
-						} catch (Exception e) {
-						    listener.error("Exception reading environment - using empty environment");
-						    environment = new EnvVars();
-						}
                         IGitAPI git = new GitAPI(gitExe, new FilePath(localWorkspace), listener, environment);
 
                         IBuildChooser buildChooser = new BuildChooser(GitSCM.this,git,new GitUtils(listener,git), buildData );
@@ -532,7 +550,7 @@ public class GitSCM extends SCM implements Serializable {
 										+ mergeOptions.getMergeTarget());
 
 						// checkout origin/blah
-						ObjectId target = git.revParse(mergeOptions.getMergeTarget());
+						ObjectId target = git.revParse(mergeOptions.getRemoteBranchName());
 						git.checkout(target.name());
 
 						try {
@@ -797,8 +815,25 @@ public class GitSCM extends SCM implements Serializable {
             }
 
             PreBuildMergeOptions mergeOptions = new PreBuildMergeOptions();
-            if( req.getParameter("git.mergeTarget") != null && req.getParameter("git.mergeTarget").trim().length()  > 0 )
+            if( req.getParameter("git.doMerge") != null && req.getParameter("git.doMerge").trim().length()  > 0 )
             {
+                RemoteConfig mergeRemote = null;
+                String mergeRemoteName = req.getParameter("git.mergeRemote").trim();
+                if (mergeRemoteName.length() == 0)
+                    mergeRemote = remoteRepositories.get(0);
+                else
+                    for (RemoteConfig remote : remoteRepositories)
+                    {
+                        if (remote.getName().equals(mergeRemoteName))
+                        {
+                            mergeRemote = remote;
+                            break;
+                        }
+                    }
+                if (mergeRemote==null)
+                     throw new FormException("No remote repository configured with name '" + mergeRemoteName + "'", "git.mergeRemote");
+                mergeOptions.setMergeRemote(mergeRemote);
+
             	mergeOptions.setMergeTarget(req.getParameter("git.mergeTarget"));
             }
 
@@ -861,6 +896,27 @@ public class GitSCM extends SCM implements Serializable {
 
 				}
 			}.process();
+		}
+
+		public FormValidation doGitRemoteNameCheck(StaplerRequest req, StaplerResponse rsp)
+				throws IOException, ServletException {
+			String mergeRemoteName = req.getParameter("value");
+
+			if (mergeRemoteName.length() == 0)
+				return FormValidation.ok();
+
+			String[] urls = req.getParameterValues("git.repo.url");
+			String[] names = req.getParameterValues("git.repo.name");
+
+			names = GitUtils.fixupNames(names, urls);
+
+			for (String name : names)
+			{
+				if (name.equals(mergeRemoteName))
+					return FormValidation.ok();
+			}
+
+			return FormValidation.error("No remote repository configured with name '" + mergeRemoteName + "'");
 		}
 	}
 
