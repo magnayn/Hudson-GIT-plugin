@@ -33,7 +33,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.MalformedURLException;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -96,6 +95,7 @@ public class GitSCM extends SCM implements Serializable {
 	private Collection<SubmoduleConfig> submoduleCfg;
 
     public static final String GIT_BRANCH = "GIT_BRANCH";
+    public static final String GIT_COMMIT = "GIT_COMMIT";
 
     public Collection<SubmoduleConfig> getSubmoduleCfg() {
 		return submoduleCfg;
@@ -147,21 +147,15 @@ public class GitSCM extends SCM implements Serializable {
    			mergeOptions = new PreBuildMergeOptions();
 
 
-    	   try {
 			remoteRepositories.add(newRemoteConfig("origin", source, new RefSpec("+refs/heads/*:refs/remotes/origin/*") ));
-			} catch (URISyntaxException e) {
-				// We gave it our best shot
+			if( branch != null )
+			{
+			    branches.add(new BranchSpec(branch));
 			}
-
-		   if( branch != null )
-	       {
-	    	   branches.add(new BranchSpec(branch));
-	       }
-	       else
-	       {
-	    	   branches.add(new BranchSpec("*/master"));
-	       }
-
+			else
+			{
+			    branches.add(new BranchSpec("*/master"));
+			}
        }
 
 
@@ -343,7 +337,7 @@ public class GitSCM extends SCM implements Serializable {
 
 	}
 
-	public RemoteConfig getSubmoduleRepository(RemoteConfig orig, String name) throws URISyntaxException
+	public RemoteConfig getSubmoduleRepository(RemoteConfig orig, String name)
     {
 	    // Attempt to guess the submodule URL??
 
@@ -365,7 +359,7 @@ public class GitSCM extends SCM implements Serializable {
         return newRemoteConfig(name, refUrl, orig.getFetchRefSpecs().get(0) );
     }
 
-	private RemoteConfig newRemoteConfig(String name, String refUrl, RefSpec refSpec) throws URISyntaxException
+	private RemoteConfig newRemoteConfig(String name, String refUrl, RefSpec refSpec)
 	{
 
         File temp = null;
@@ -531,6 +525,7 @@ public class GitSCM extends SCM implements Serializable {
 			return false;
 		}
 		listener.getLogger().println("Commencing build of " + revToBuild);
+		environment.put(GIT_COMMIT, revToBuild.getSha1String());
 		Object[] returnData; // Changelog, BuildData
 
 
@@ -641,6 +636,7 @@ public class GitSCM extends SCM implements Serializable {
 
 				if (git.hasGitModules()) {
 					git.submoduleInit();
+					git.submoduleSync();
 
 					// Git submodule update will only 'fetch' from where it
 					// regards as 'origin'. However,
@@ -709,7 +705,10 @@ public class GitSCM extends SCM implements Serializable {
 
     public void buildEnvVars(AbstractBuild build, java.util.Map<String, String> env) {
         super.buildEnvVars(build, env);
-        env.put(GIT_BRANCH, getSingleBranch(build));
+        String branch = getSingleBranch(build);
+        if(branch != null){
+            env.put(GIT_BRANCH, branch);
+        }
     }
 
 	private String putChangelogDiffsIntoFile(IGitAPI git, String branchName, String revFrom,
@@ -880,28 +879,36 @@ public class GitSCM extends SCM implements Serializable {
 			return true;
 		}
 
-		public void doGitExeCheck(StaplerRequest req, StaplerResponse rsp)
+		public void doGitExeCheck(final StaplerRequest req, StaplerResponse rsp)
 				throws IOException, ServletException {
 			new FormFieldValidator.Executable(req, rsp) {
 				protected void checkExecutable(File exe) throws IOException,
 						ServletException {
 					ByteArrayOutputStream baos = new ByteArrayOutputStream();
 					try {
+                        String gitExe = req.getParameter("value");
 						Proc proc = Hudson.getInstance().createLauncher(
 								TaskListener.NULL).launch(
-								new String[] { getGitExe(), "--version" },
+								new String[] { gitExe, "--version" },
 								new String[0], baos, null);
 						proc.join();
+                        String versionString = baos.toString();
+                        if (!versionString.startsWith("git")) {
+                             error("Version string didn't start with \"git\" as expected, output was :\n"
+                                     + versionString);
+                        } else {
+                            ok();
+                        }
 
-						// String result = baos.toString();
 
-						ok();
 
 					} catch (InterruptedException e) {
-						error("Unable to check git version");
+						error("Unable to check git version, reason: \n" + e.getLocalizedMessage());
 					} catch (RuntimeException e) {
-						error("Unable to check git version");
-					}
+						error("Unable to check git version, reason: \n" + e.getLocalizedMessage());
+					} catch (IOException e) {
+                        error("Unable to check git version, reason: \n" + e.getLocalizedMessage());
+                    }
 
 				}
 			}.process();
