@@ -540,7 +540,7 @@ public class GitAPI implements IGitAPI {
     public void fetch(RemoteConfig remoteRepository) throws GitException
     {
         // Assume there is only 1 URL / refspec for simplicity
-        fetch(remoteRepository.getURIs().get(0).toString(), remoteRepository.getFetchRefSpecs().get(0).toString());
+        fetch(remoteRepository.getURIs().get(0).toPrivateString(), remoteRepository.getFetchRefSpecs().get(0).toString());
 
     }
 
