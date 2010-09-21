@@ -341,7 +341,7 @@ public class GitSCM extends SCM implements Serializable {
     {
 	    // Attempt to guess the submodule URL??
 
-        String refUrl = orig.getURIs().get(0).toString();
+        String refUrl = orig.getURIs().get(0).toPrivateString();
 
         if (refUrl.endsWith("/.git"))
         {
