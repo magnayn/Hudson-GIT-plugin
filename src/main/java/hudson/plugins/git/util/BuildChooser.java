@@ -1,194 +1,281 @@
 package hudson.plugins.git.util;
 
-import hudson.model.Action;
-import hudson.model.Result;
-import hudson.plugins.git.Branch;
-import hudson.plugins.git.BranchSpec;
+import edu.umd.cs.findbugs.annotations.CheckForNull;
+import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.Nullable;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import hudson.DescriptorExtensionList;
+import hudson.ExtensionPoint;
+import hudson.model.Describable;
+import jenkins.model.Jenkins;
+import hudson.model.Item;
+import hudson.model.TaskListener;
 import hudson.plugins.git.GitException;
 import hudson.plugins.git.GitSCM;
 import hudson.plugins.git.IGitAPI;
 import hudson.plugins.git.Revision;
+import org.jenkinsci.plugins.gitclient.GitClient;
 
+import javax.annotation.ParametersAreNonnullByDefault;
 import java.io.IOException;
+import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.Set;
+import java.util.List;
 
-import org.spearce.jgit.lib.ObjectId;
+/**
+ * Interface defining an API to choose which revisions ought to be
+ * considered for building.
+ *
+ * <p>
+ * This object is persisted as a part of the project configuration.
+ *
+ * @author magnayn
+ * @author Kohsuke Kawaguchi
+ */
+public abstract class BuildChooser implements ExtensionPoint, Describable<BuildChooser>, Serializable {
 
-public class BuildChooser implements IBuildChooser {
+    /**
+     * Refers back to the {@link GitSCM} that owns this build chooser.
+     * Do not modify from outside {@link GitSCM}.
+     */
+    public transient GitSCM gitSCM;
 
-    private final IGitAPI               git;
-    private final GitUtils              utils;
-    private final GitSCM                gitSCM;
-
-    //-------- Data -----------
-    private final BuildData             data;
-
-    public BuildChooser(GitSCM gitSCM, IGitAPI git, GitUtils utils, BuildData data)
-    {
-        this.gitSCM = gitSCM;
-        this.git = git;
-        this.utils = utils;
-        this.data = data == null ? new BuildData() : data;
+    /**
+     * Short-hand to get to the display name.
+     * @return display name of this build chooser
+     */
+    public final String getDisplayName() {
+        return getDescriptor().getDisplayName();
+    }
+    
+    /**
+     * Get a list of revisions that are candidates to be built.
+     *
+     * <p>
+     * This method is invoked on the node where the workspace exists, which may not be the master.
+     *
+     * @param isPollCall true if this method is called from pollChanges.
+     * @param singleBranch contains the name of a single branch to be built
+     *        this will be non-null only in the simple case, in advanced
+     *        cases with multiple repositories and/or branches specified
+     *        then this value will be null.
+     * @param git
+     *        Used for invoking Git
+     * @param listener
+     *        build log
+     * @param buildData build data to be used
+     *        Information that captures what we did during the last build.
+     * @param context
+     *      Object that provides access back to the model object. This is because
+     *      the build chooser can be invoked on a slave where there's no direct access
+     *      to the build/project for which this is invoked.
+     *
+     *      If {@code isPollCall} is false, then call back to both project and build are available.
+     *      If {@code isPollCall} is true, then only the callback to the project is available as there's
+     *      no contextual build object.
+     * @return
+     *      the candidate revision. Can be an empty set to indicate that there's nothing to build.
+     *
+     * @throws IOException on input or output error
+     * @throws GitException on git error
+     * @throws InterruptedException when interrupted
+     */
+    public Collection<Revision> getCandidateRevisions(boolean isPollCall, @CheckForNull String singleBranch,
+                    @NonNull GitClient git, @NonNull TaskListener listener, 
+                    @NonNull BuildData buildData, @NonNull BuildChooserContext context) 
+                    throws GitException, IOException, InterruptedException {
+        // fallback to the previous signature
+        return getCandidateRevisions(isPollCall, singleBranch, (IGitAPI) git, listener, buildData, context);
     }
 
     /**
-     * Determines which Revisions to build.
+     * @deprecated as of 1.2.0
+     *     Use and override {@link #getCandidateRevisions(boolean, String, org.jenkinsci.plugins.gitclient.GitClient, hudson.model.TaskListener, BuildData, BuildChooserContext)}
+     * @param isPollCall true if this method is called from pollChanges.
+     * @param singleBranch contains the name of a single branch to be built
+     *        this will be non-null only in the simple case, in advanced
+     *        cases with multiple repositories and/or branches specified
+     *        then this value will be null.
+     * @param git
+     *        Used for invoking Git
+     * @param listener
+     *        build log
+     * @param buildData
+     *        Information that captures what we did during the last build.
+     * @param context
+     *      Object that provides access back to the model object. This is because
+     *      the build chooser can be invoked on a slave where there's no direct access
+     *      to the build/project for which this is invoked.
      *
-     * If only one branch is chosen and only one repository is listed, then
-     * just attempt to find the latest revision number for the chosen branch.
-     *
-     * If multiple branches are selected or the branches include wildcards, then
-     * use the advanced usecase as defined in the getAdvancedCandidateRevisons
-     * method.
-     *
-     * @throws IOException
-     * @throws GitException
+     *      If {@code isPollCall} is false, then call back to both project and build are available.
+     *      If {@code isPollCall} is true, then only the callback to the project is available as there's
+     *      no contextual build object.
+     * @return
+     *      the candidate revision. Can be an empty set to indicate that there's nothing to build.
+     * @throws IOException on input or output error
+     * @throws GitException on git error
+     * @throws InterruptedException when interrupted
      */
-    public Collection<Revision> getCandidateRevisions(boolean isPollCall, String singleBranch)
-            throws GitException, IOException {
-        // if the branch name contains more wildcards then the simple usecase
-        // does not apply and we need to skip to the advanced usecase
-        if (singleBranch == null || singleBranch.contains("*"))
-            return getAdvancedCandidateRevisions(isPollCall);
+    public Collection<Revision> getCandidateRevisions(boolean isPollCall, String singleBranch,
+                               IGitAPI git, TaskListener listener, BuildData buildData, BuildChooserContext context) throws GitException, IOException, InterruptedException {
+        // fallback to the previous signature
+        return getCandidateRevisions(isPollCall,singleBranch,git,listener,buildData);
+    }
 
-        // check if we're trying to build a specific commit
-        // this only makes sense for a build, there is no
-        // reason to poll for a commit
-        if (!isPollCall && singleBranch.matches("[0-9a-f]{6,40}"))
-        {
-            try
-            {
-                ObjectId sha1 = git.revParse(singleBranch);
-                Revision revision = new Revision(sha1);
-                revision.getBranches().add(new Branch("detached", sha1));
-                return Collections.singletonList(revision);
-            }
-            catch (GitException e)
-            {
-                // revision does not exist, may still be a branch
-                // for example a branch called "badface" would show up here
-            }
-        }
 
-        // if it doesn't contain '/' then it could be either a tag or an unqualified branch
-        if (!singleBranch.contains("/")) {
-	        // the 'branch' could actually be a tag:
-	        Set<String> tags = git.getTagNames(singleBranch);
-	        if(tags.size() == 0) {
-		        // its not a tag, so lets fully qualify the branch
-		            String repository = gitSCM.getRepositories().get(0).getName();
-		            singleBranch = repository + "/" + singleBranch;
-	        }
-        }
-
-        try
-        {
-            ObjectId sha1 = git.revParse(singleBranch);
-
-            // if polling for changes don't select something that has
-            // already been built as a build candidate
-            if (isPollCall && data.hasBeenBuilt(sha1))
-                return Collections.<Revision>emptyList();
-
-            Revision revision = new Revision(sha1);
-            revision.getBranches().add(new Branch(singleBranch, sha1));
-            return Collections.singletonList(revision);
-        }
-        catch (GitException e)
-        {
-            // branch does not exist, there is nothing to build
-            return Collections.<Revision>emptyList();
-        }
+    /**
+     * @deprecated as of 1.1.17
+     *      Use and override {@link #getCandidateRevisions(boolean, String, IGitAPI, TaskListener, BuildData, BuildChooserContext)}
+     * @param isPollCall true if this method is called from pollChanges.
+     * @param singleBranch contains the name of a single branch to be built
+     *        this will be non-null only in the simple case, in advanced
+     *        cases with multiple repositories and/or branches specified
+     *        then this value will be null.
+     * @param git GitClient used to access repository
+     * @param listener build log
+     * @param buildData build data to be used
+     *      Information that captures what we did during the last build.
+     * @return
+     *      the candidate revision. Can be an empty set to indicate that there's nothing to build.
+     * @throws IOException on input or output error
+     * @throws GitException on git error
+     */
+    public Collection<Revision> getCandidateRevisions(boolean isPollCall, String singleBranch,
+                               IGitAPI git, TaskListener listener, BuildData buildData) throws GitException, IOException {
+        throw new UnsupportedOperationException("getCandidateRevisions method must be overridden");
     }
 
     /**
-     * In order to determine which Revisions to build.
+     * @deprecated as of 1.1.25
+     *      Use and override {@link #prevBuildForChangelog(String, BuildData, IGitAPI, BuildChooserContext)}
+     * @param branch contains the name of branch to be built
+     *        this will be non-null only in the simple case, in advanced
+     *        cases with multiple repositories and/or branches specified
+     *        then this value will be null.
+     * @param buildData build data to be used
+     *      Information that captures what we did during the last build.
+     * @param git
+     *      Used for invoking Git
+     * @return
+     *      the candidate revision. Can be an empty set to indicate that there's nothi     */
+    public Build prevBuildForChangelog(String branch, @Nullable BuildData buildData, IGitAPI git) {
+        return buildData == null ? null : buildData.getLastBuildOfBranch(branch);
+    }
+
+    /**
+     * Determines the baseline to compute the changelog against.
      *
-     * Does the following :
-     *  1. Find all the branch revisions
-     *  2. Filter out branches that we don't care about from the revisions.
-     *     Any Revisions with no interesting branches are dropped.
-     *  3. Get rid of any revisions that are wholly subsumed by another
-     *     revision we're considering.
-     *  4. Get rid of any revisions that we've already built.
+     * <p>
+     * {@link #getCandidateRevisions(boolean, String, IGitAPI, TaskListener, BuildData, BuildChooserContext)} determine
+     * what commits can be subject for a build, and for each commit it determines the branches that contribute to them.
      *
-     *  NB: Alternate IBuildChooser implementations are possible - this
-     *  may be beneficial if "only 1" branch is to be built, as much of
-     *  this work is irrelevant in that usecase.
-     * @throws IOException
-     * @throws GitException
+     * <p>
+     * Once {@link GitSCM} picks up a specific {@link Revision} to build, {@linkplain Revision#getBranches() for each branch},
+     * in that revision, this method is called to compute the changelog.
+     *
+     * @param branch
+     *      The branch name.
+     * @param data
+     *      Information that captures what we did during the last build.
+     * @param git
+     *      Used for invoking Git
+     * @param context
+     *      Object that provides access back to the model object. This is because
+     *      the build chooser can be invoked on a slave where there's no direct access
+     *      to the build/project for which this is invoked.
+     * @return preceding build
+     * @throws IOException on input or output error
+     * @throws InterruptedException when interrupted
+     * @return
+     *      the candidate revision. Can be an empty set to indicate that there's nothing to build.
      */
-    private Collection<Revision> getAdvancedCandidateRevisions(boolean isPollCall) throws GitException, IOException
-    {
-        // 1. Get all the (branch) revisions that exist
-        Collection<Revision> revs = utils.getAllBranchRevisions();
-
-        // 2. Filter out any revisions that don't contain any branches that we
-        // actually care about (spec)
-        for (Iterator<Revision> i = revs.iterator(); i.hasNext();)
-        {
-            Revision r = i.next();
-
-            // filter out uninteresting branches
-            for (Iterator<Branch> j = r.getBranches().iterator(); j.hasNext();)
-            {
-                Branch b = j.next();
-                boolean keep = false;
-                for (BranchSpec bspec : gitSCM.getBranches())
-                {
-                    if (bspec.matches(b.getName()))
-                    {
-                        keep = true;
-                        break;
-                    }
-                }
-
-                if (!keep) j.remove();
-
-            }
-
-            if (r.getBranches().size() == 0) i.remove();
-
-        }
-
-        // 3. We only want 'tip' revisions
-        revs = utils.filterTipBranches(revs);
-
-        // 4. Finally, remove any revisions that have already been built.
-        for (Iterator<Revision> i = revs.iterator(); i.hasNext();)
-        {
-            Revision r = i.next();
-
-            if (data.hasBeenBuilt(r.getSha1()))
-            {
-                i.remove();
-            }
-        }
-
-        // if we're trying to run a build (not an SCM poll) and nothing new
-        // was found then just run the last build again
-        if (!isPollCall && revs.size() == 0 && data.getLastBuiltRevision() != null)
-        {
-            return Collections.singletonList(data.getLastBuiltRevision());
-        }
-
-        return revs;
+    public Build prevBuildForChangelog(String branch, @Nullable BuildData data, GitClient git, BuildChooserContext context) throws IOException,InterruptedException {
+        return prevBuildForChangelog(branch,data, (IGitAPI) git, context);
     }
 
-    public Build revisionBuilt(Revision revision, int buildNumber, Result result )
-    {
-        Build build = new Build(revision, buildNumber, result);
-        data.saveBuild(build);
-        return build;
+    /**
+     * @deprecated as of 1.2.0
+     *     Use and override {@link #prevBuildForChangelog(String, BuildData, org.jenkinsci.plugins.gitclient.GitClient, BuildChooserContext)}
+     * @param branch contains the name of a branch to be built
+     *        this will be non-null only in the simple case, in advanced
+     *        cases with multiple repositories and/or branches specified
+     *        then this value will be null.
+     * @param data
+     *      Information that captures what we did during the last build.
+     * @param git
+     *      Used for invoking Git
+     * @param context
+     *      Object that provides access back to the model object. This is because
+     *      the build chooser can be invoked on a slave where there's no direct access
+     *      to the build/project for which this is invoked.
+     *
+     *      If {@code isPollCall} is false, then call back to both project and build are available.
+     *      If {@code isPollCall} is true, then only the callback to the project is available as there's
+     *      no contextual build object.
+     * @return
+     *      the candidate revision. Can be an empty set to indicate that there's nothing to build.
+     * @throws IOException on I/O error
+     * @throws GitException on git error
+     * @throws InterruptedException if interrupted
+     */
+    public Build prevBuildForChangelog(String branch, @Nullable BuildData data, IGitAPI git, BuildChooserContext context) throws IOException,InterruptedException {
+        return prevBuildForChangelog(branch,data,git);
     }
 
-
-    public Action getData()
-    {
-        return data;
+    /**
+     * Returns build chooser descriptor.
+     * @return build chooser descriptor
+     */
+    @SuppressFBWarnings(value="NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification="Jenkins.getInstance() is not null")
+    public BuildChooserDescriptor getDescriptor() {
+        return (BuildChooserDescriptor)Jenkins.getInstance().getDescriptorOrDie(getClass());
     }
 
+    /**
+     * All the registered build choosers.
+     * @return all registered build choosers
+     */
+    @SuppressFBWarnings(value="NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE", justification="Jenkins.getInstance() is not null")
+    public static DescriptorExtensionList<BuildChooser,BuildChooserDescriptor> all() {
+        return Jenkins.getInstance()
+               .<BuildChooser,BuildChooserDescriptor>getDescriptorList(BuildChooser.class);
+    }
+
+    /**
+     * All the registered build choosers that are applicable to the specified item.
+     *
+     * @param item the item.
+     * @return All build choosers applicable to item
+     */
+    public static List<BuildChooserDescriptor> allApplicableTo(Item item) {
+        List<BuildChooserDescriptor> result = new ArrayList<>();
+        for (BuildChooserDescriptor d: all()) {
+            if (d.isApplicable(item.getClass()))
+                result.add(d);
+        }
+        return result;
+    }
+
+    private static final long serialVersionUID = 1L;
+
+    /**
+     * In a general case, a working tree is a left-over from the previous build, so it can be quite
+     * messed up (such as HEAD pointing to a random branch). This method is responsible to bring the
+     * working copy to a predictable clean state where candidate revisions can be evaluated.
+     * <p>
+     * Typical use-case is a BuildChooser which do handle pull-request merge for validation. Such a
+     * BuildChooser will run the merge on working copy, and expose the merge commit as
+     * {@link BuildChooser#getCandidateRevisions(boolean, String, org.jenkinsci.plugins.gitclient.GitClient, hudson.model.TaskListener, BuildData, BuildChooserContext)}
+     *
+     * @param git client to execute git commands on working tree
+     * @param listener build log
+     * @param context back-channel to master so implementation can interact with Jenkins model
+     * @throws IOException on input or output error
+     * @throws InterruptedException when interrupted
+     */
+    @ParametersAreNonnullByDefault
+    public void prepareWorkingTree(GitClient git, TaskListener listener, BuildChooserContext context) throws IOException,InterruptedException {
+        // Nop
+    }
 }

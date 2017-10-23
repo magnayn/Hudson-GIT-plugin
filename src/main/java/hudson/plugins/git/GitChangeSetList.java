@@ -1,11 +1,14 @@
 package hudson.plugins.git;
 
+import hudson.model.Run;
 import hudson.scm.ChangeLogSet;
-import hudson.model.AbstractBuild;
+import hudson.scm.RepositoryBrowser;
+import org.kohsuke.stapler.export.Exported;
 
-import java.util.List;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
+
 
 /**
  * List of changeset that went into a particular build.
@@ -14,8 +17,8 @@ import java.util.Iterator;
 public class GitChangeSetList extends ChangeLogSet<GitChangeSet> {
     private final List<GitChangeSet> changeSets;
 
-    /*package*/ GitChangeSetList(AbstractBuild build, List<GitChangeSet> logs) {
-        super(build);
+    /*package*/ GitChangeSetList(Run build, RepositoryBrowser<?> browser, List<GitChangeSet> logs) {
+        super(build, browser);
         Collections.reverse(logs);  // put new things first
         this.changeSets = Collections.unmodifiableList(logs);
         for (GitChangeSet log : logs)
@@ -33,4 +36,10 @@ public class GitChangeSetList extends ChangeLogSet<GitChangeSet> {
     public List<GitChangeSet> getLogs() {
         return changeSets;
     }
+
+    @Exported
+    public String getKind() {
+        return "git";
+    }
+
 }

@@ -1,127 +1,179 @@
 package hudson.plugins.git;
 
+import hudson.EnvVars;
+import hudson.Extension;
+import hudson.model.AbstractDescribableImpl;
+import hudson.model.Descriptor;
+import org.kohsuke.stapler.DataBoundConstructor;
+
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.StringTokenizer;
 import java.util.regex.Pattern;
+import org.kohsuke.stapler.export.Exported;
+import org.kohsuke.stapler.export.ExportedBean;
 
 /**
  * A specification of branches to build. Rather like a refspec.
- * 
+ *
  * eg:
+ * <pre>
  * master
  * origin/master
- * origin/ *
- * origin/ * /thing
+ * origin/&#42;
+ * origin/&#42;/thing
+ * </pre>
  */
-public class BranchSpec implements Serializable
-{
+@ExportedBean
+public class BranchSpec extends AbstractDescribableImpl<BranchSpec> implements Serializable {
     private static final long serialVersionUID = -6177158367915899356L;
 
     private String name;
-    private transient Pattern pattern;
-    
-    public String getName()
-    {
+
+    @Exported
+    public String getName() {
         return name;
     }
 
-    public void setName(String value)
-    {
-       this.name = value;
-    }
-    
-    public BranchSpec(String name)
-    {
-        if( name == null )
+    public void setName(String name) {
+    	if(name == null)
             throw new IllegalArgumentException();
-        else if( name.length() == 0 )
+        else if(name.length() == 0)
             this.name = "**";
         else
-            this.name = name;
+            this.name = name.trim();
     }
-    
-    public boolean matches(String item)
-    {
-        return getPattern().matcher(item).matches();
+
+    @DataBoundConstructor
+    public BranchSpec(String name) {
+        setName(name);
     }
-    
-    public List<String> filterMatching(Collection<String> branches)
-    {
-        List<String> items = new ArrayList<String>();
+
+    public String toString() {
+        return name;
+    }
+
+    public boolean matches(String item) {
+        EnvVars env = new EnvVars();
+        return matches(item, env);
+    }
+
+    /**
+     * Compare a git branch reference to configured pattern.
+     * <p>
+     * reference uses normalized format `ref/(heads|tags)/xx`
+     * pattern do support
+     * <ul>
+     *     <li>ref/heads/branch</li>
+     *     <li>(remote-name)?/branch</li>
+     *     <li>ref/remotes/branch</li>
+     *     <li>tag</li>
+     *     <li>(commit sha1)</li>
+     * </ul>
+     * @param ref branch reference to compare
+     * @param env environment variables to use in comparison
+     * @return true if ref matches configured pattern
+     */
+    public boolean matches(String ref, EnvVars env) {
+        return getPattern(env).matcher(ref).matches();
+    }
+
+    /**
+     * @deprecated use {@link #filterMatching(Collection, EnvVars)}
+     * @param branches source branch list to be filtered by configured branch specification using a newly constructed EnvVars
+     * @return branch names which match
+     */
+    public List<String> filterMatching(Collection<String> branches) {
+        EnvVars env = new EnvVars();
+        return filterMatching(branches, env);
+    }
+
+    public List<String> filterMatching(Collection<String> branches, EnvVars env) {
+        List<String> items = new ArrayList<>();
         
-        for(String b : branches)
-        {
-            if(matches(b))
+        for(String b : branches) {
+            if(matches(b, env))
                 items.add(b);
         }
         
         return items;
     }
     
-    public List<Branch> filterMatchingBranches(Collection<Branch> branches)
-    {
-        List<Branch> items = new ArrayList<Branch>();
+    public List<Branch> filterMatchingBranches(Collection<Branch> branches) {
+        EnvVars env = new EnvVars();
+        return filterMatchingBranches(branches, env);
+    }
+
+    public List<Branch> filterMatchingBranches(Collection<Branch> branches, EnvVars env) {
+        List<Branch> items = new ArrayList<>();
         
-        for(Branch b : branches)
-        {
-            if(matches(b.getName()))
+        for(Branch b : branches) {
+            if(matches(b.getName(), env))
                 items.add(b);
         }
         
         return items;
     }
+
+    private String getExpandedName(EnvVars env) {
+        String expandedName = env.expand(name);
+        if (expandedName.length() == 0) {
+            return "**";
+        }
+        return expandedName;
+    }
     
-    private Pattern getPattern()
-    {
-        // return the saved pattern if available
-        if (pattern != null)
-            return pattern;
-        
-        // if an unqualified branch was given add a "*/" so it will match branches
-        // from remote repositories as the user probably intended
-        String qualifiedName;
-        if (!name.contains("**") && !name.contains("/"))
-            qualifiedName = "*/" + name;
-        else
-            qualifiedName = name;
-        
+    private Pattern getPattern(EnvVars env) {
+        String expandedName = getExpandedName(env);
+        // use regex syntax directly if name starts with colon
+        if (expandedName.startsWith(":") && expandedName.length() > 1) {
+            String regexSubstring = expandedName.substring(1, expandedName.length());
+            return Pattern.compile(regexSubstring);
+        }
+
         // build a pattern into this builder
         StringBuilder builder = new StringBuilder();
+
+        // for legacy reasons (sic) we do support various branch spec format to declare remotes / branches
+        builder.append("(refs/heads/");
+
+
+        // if an unqualified branch was given, consider all remotes (with various possible syntaxes)
+        // so it will match branches from  any remote repositories as the user probably intended
+        if (!expandedName.contains("**") && !expandedName.contains("/")) {
+            builder.append("|refs/remotes/[^/]+/|remotes/[^/]+/|[^/]+/");
+        } else {
+            builder.append("|refs/remotes/|remotes/");
+        }
+        builder.append(")?");
         
         // was the last token a wildcard?
         boolean foundWildcard = false;
         
         // split the string at the wildcards
-        StringTokenizer tokenizer = new StringTokenizer(qualifiedName, "*", true);
-        while (tokenizer.hasMoreTokens())
-        {
+        StringTokenizer tokenizer = new StringTokenizer(expandedName, "*", true);
+        while (tokenizer.hasMoreTokens()) {
             String token = tokenizer.nextToken();
             
             // is this token is a wildcard?
-            if (token.equals("*"))
-            {
+            if (token.equals("*")) {
                 // yes, was the previous token a wildcard?
-                if (foundWildcard)
-                {
+                if (foundWildcard) {
                     // yes, we found "**"
                     // match over any number of characters
                     builder.append(".*");
                     foundWildcard = false;
                 }
-                else
-                {
+                else {
                     // no, set foundWildcard to true and go on
                     foundWildcard = true;
                 }
             }
-            else
-            {
+            else {
                 // no, was the previous token a wildcard?
-                if (foundWildcard)
-                {
+                if (foundWildcard) {
                     // yes, we found "*" followed by a non-wildcard
                     // match any number of characters other than a "/"
                     builder.append("[^/]*");
@@ -133,14 +185,18 @@ public class BranchSpec implements Serializable
         }
         
         // if the string ended with a wildcard add it now
-        if (foundWildcard)
-        {
+        if (foundWildcard) {
             builder.append("[^/]*");
         }
         
-        // save the pattern
-        pattern = Pattern.compile(builder.toString());
-        
-        return pattern;
+        return Pattern.compile(builder.toString());
+    }
+
+    @Extension
+    public static class DescriptorImpl extends Descriptor<BranchSpec> {
+        @Override
+        public String getDisplayName() {
+            return "Branch Spec";
+        }
     }
 }
