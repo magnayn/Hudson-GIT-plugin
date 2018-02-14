@@ -1,3 +1,4 @@
+<?jelly escape-by-default='true'?>
 <div>
-  This plugin integrates <a href="http://git.or.cz/">GIT</a> to Hudson.  
+  This plugin integrates <a href="https://git-scm.com/">Git</a> with Jenkins.
 </div>

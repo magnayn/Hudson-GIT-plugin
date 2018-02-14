@@ -1,22 +1,26 @@
+<?jelly escape-by-default='true'?>
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
 	<l:layout title="Git">
-	
-	
-    <l:main-panel>
-       	<h1>Git Build Data</h1>		
-       	
-       	<b>Revision:</b> ${it.lastBuild.SHA1.name()}
+		<j:set var="build" value="${it.owningRun}"/>
+		<j:if test="${build!=null}">
+			<st:include page="sidepanel" it="${build}" optional="true"/>
+		</j:if>
+	<l:main-panel>
+	<h1>${%Git Build Data}</h1>
+
+	<b>${%Revision}:</b> ${it.lastBuild.SHA1.name()}
+        <j:if test="${!empty(it.scmName)}"> from <b>SCM:</b> ${it.scmName}</j:if>
 	<ul>
 	<j:forEach var="branch" items="${it.lastBuild.revision.branches}">
 	<li>${branch.name}</li>
 	</j:forEach>
 	</ul>
 
-	<h2>Built Branches</h2>
+	<h2>${%Built Branches}</h2>
 	<ul>
 
 	<j:forEach var="branch" items="${it.buildsByBranchName.keySet()}">
-	<li>${branch}: ${it.buildsByBranchName.get(branch).toString()}</li>
+	<li><j:choose><j:when test="${branch}==''}">(unnamed)</j:when><j:otherwise>${branch}</j:otherwise></j:choose>: ${it.buildsByBranchName.get(branch).toString()}</li>
 	</j:forEach>
 	</ul>
 

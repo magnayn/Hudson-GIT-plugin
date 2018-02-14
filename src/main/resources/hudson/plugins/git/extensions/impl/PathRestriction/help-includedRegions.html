@@ -1,0 +1,14 @@
+<div>
+  Each inclusion uses <a href="http://docs.oracle.com/javase/7/docs/api/java/util/regex/Pattern.html">java regular expression pattern matching</a>,
+    and must be separated by a new line.
+  An empty list implies that everything is included.
+  <p/>
+  <pre>
+    myapp/src/main/web/.*\.html
+    myapp/src/main/web/.*\.jpeg
+    myapp/src/main/web/.*\.gif
+  </pre>
+  The example above illustrates that a build will only occur, if html/jpeg/gif files
+  have been committed to the SCM. Exclusions take precedence over inclusions, if there is
+  an overlap between included and excluded regions.
+</div>
