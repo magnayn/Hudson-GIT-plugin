@@ -1440,6 +1440,7 @@ public class GitSCM extends GitSCMBackwardCompatibility {
         private String globalConfigName;
         private String globalConfigEmail;
         private boolean createAccountBasedOnEmail;
+        private boolean truncateCommitMsg;
 //        private GitClientType defaultClientType = GitClientType.GITCLI;
 
         public DescriptorImpl() {
@@ -1531,6 +1532,14 @@ public class GitSCM extends GitSCMBackwardCompatibility {
 
         public void setCreateAccountBasedOnEmail(boolean createAccountBasedOnEmail) {
             this.createAccountBasedOnEmail = createAccountBasedOnEmail;
+        }
+
+        public boolean isTruncateCommitMsg() {
+            return truncateCommitMsg;
+        }
+
+        public void setTruncateCommitMsg(boolean truncateCommitMsg) {
+            this.truncateCommitMsg = truncateCommitMsg;
         }
 
         /**

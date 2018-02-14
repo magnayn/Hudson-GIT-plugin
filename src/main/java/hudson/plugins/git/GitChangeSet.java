@@ -226,11 +226,15 @@ public class GitChangeSet extends ChangeLogSet.Entry {
 
         this.comment = message.toString();
 
-        int endOfFirstLine = this.comment.indexOf('\n');
-        if (endOfFirstLine == -1) {
-            this.title = this.comment;
+        if (isTruncateCommitMsg()) {
+            int endOfFirstLine = this.comment.indexOf('\n');
+            if (endOfFirstLine == -1) {
+                this.title = this.comment;
+            } else {
+                this.title = this.comment.substring(0, endOfFirstLine);
+            }
         } else {
-            this.title = this.comment.substring(0, endOfFirstLine);
+            this.title = this.comment;
         }
     }
 
@@ -442,6 +446,21 @@ public class GitChangeSet extends ChangeLogSet.Entry {
         }
 
         return descriptor.isCreateAccountBasedOnEmail();
+    }
+
+    private boolean isTruncateCommitMsg()
+    {
+        Hudson hudson = Hudson.getInstance();
+        if(hudson == null) {
+            return false;
+        }
+        DescriptorImpl descriptor = (DescriptorImpl) hudson.getDescriptor(GitSCM.class);
+
+        if (descriptor == null) {
+            return false;
+        }
+
+        return descriptor.isTruncateCommitMsg();
     }
 
     @Override
